@@ -20,7 +20,10 @@ mongoose.connect(process.env.MONGODB_URI, {
 
 // ✅ Enable CORS
 app.use(cors({
-  origin: "https://snowwberry.vercel.app", // Adjust origin to match your Vercel domain
+  origin: [
+    "https://snowberry.vercel.app", 
+    "https://snowwberry.vercel.app"
+  ],
 }));
 
 // Middleware to parse JSON (must be before routes)
