@@ -11,13 +11,9 @@ const categoryRoutes = require('./seller-backend/routes/categoryRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 
 // ✅ Connect to MongoDB using environment variables
-mongoose.connect(process.env.MONGODB_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-})
-  .then(() => console.log("✅ Connected to MongoDB"))
-  .catch((err) => console.log("❌ MongoDB Connection Error:", err));
-
+mongoose.connect(process.env.MONGODB_URI)
+  .then(() => console.log("MongoDB connected successfully!"))
+  .catch(err => console.error("MongoDB connection error:", err));
 // ✅ Enable CORS
 app.use(cors({
   origin: [
