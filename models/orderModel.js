@@ -4,51 +4,70 @@ const orderSchema = new mongoose.Schema({
     userId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: "User",
-        required: function() {
-            return this.isRegisteredUser;  // Only required if it's a registered user
+        required: function () {
+            return this.isRegisteredUser;
         }
     },
     userName: {
         type: String,
-        required: function() {
-            return this.isRegisteredUser;  // Only required for registered users
+        required: function () {
+            return this.isRegisteredUser;
         }
     },
     userEmail: {
         type: String,
-        required: function() {
-            return this.isRegisteredUser;  // Only required for registered users
+        required: function () {
+            return this.isRegisteredUser;
         }
     },
     userPhone: {
         type: String,
-        required: function() {
-            return this.isRegisteredUser;  // Only required for registered users
+        required: function () {
+            return this.isRegisteredUser;
         }
     },
-    // For guest users, we'll use these fields
     guestName: {
         type: String,
-        required: function() {
-            return !this.isRegisteredUser;  // Required if it's a guest user
+        required: function () {
+            return !this.isRegisteredUser;
         }
     },
     guestEmail: {
         type: String,
-        required: function() {
-            return !this.isRegisteredUser;  // Required if it's a guest user
+        required: function () {
+            return !this.isRegisteredUser;
         }
     },
     guestPhone: {
         type: String,
-        required: function() {
-            return !this.isRegisteredUser;  // Required if it's a guest user
+        required: function () {
+            return !this.isRegisteredUser;
         }
     },
     isRegisteredUser: {
         type: Boolean,
         default: false
     },
+
+    // ✅ New field: user-friendly Order ID
+    orderId: {
+        type: String,
+        unique: true, // Optional but recommended
+        required: true
+    },
+
+    // ✅ New field: AWB / Tracking ID
+    trackingId: {
+        type: String,
+        default: null
+    },
+
+    // ✅ New field: Courier Partner
+    courierPartner: {
+        type: String,
+        default: null
+    },
+
     orderItems: [
         {
             productId: { type: mongoose.Schema.Types.ObjectId, ref: "Product", required: true },

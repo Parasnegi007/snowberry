@@ -1,87 +1,127 @@
-const express = require('express');
-const multer = require('multer');
-const path = require('path');
-const Category = require('../models/categoryModel');
+const express = require("express");
+const Category = require("../models/categoryModel");
 const router = express.Router();
+const mongoose = require("mongoose");
 
-// Set storage engine for uploaded images
-const storage = multer.diskStorage({
-  destination: './uploads/', // Path where images will be stored
-  filename: function (req, file, cb) {
-    cb(null, `${Date.now()}-${file.originalname}`); // Ensure unique filenames
+// Cloudinary Setup
+const cloudinary = require("../../utils/cloudinary");
+const multer = require("multer");
+const { CloudinaryStorage } = require("multer-storage-cloudinary");
+
+const storage = new CloudinaryStorage({
+  cloudinary,
+  params: {
+    folder: "fruits-ecommerce/categories",
+    allowed_formats: ["jpg", "png", "jpeg", "webp"],
+    transformation: [{ width: 800, height: 800, crop: "limit" }],
   },
 });
 
-// Init upload
-const upload = multer({
-  storage: storage,
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit for image size
-}).single('image'); // Expect a single file with the name 'image'
+const upload = multer({ storage });
 
-// Get all categories
-router.get('/', async (req, res) => {
+console.log("✅ categoryRoutes.js is running!");
+
+// 🔹 POST - Add New Category
+router.post("/", upload.single("image"), async (req, res) => {
+  const { name, description, slug, featured } = req.body;
+  const image = req.file ? req.file.path : "";
+
+  if (!name || !description || !slug) {
+    return res.status(400).json({ message: "Name, description, and slug are required." });
+  }
+
+  try {
+    const newCategory = new Category({
+      name,
+      description,
+      slug,
+      featured,
+      image,
+    });
+
+    const savedCategory = await newCategory.save();
+    res.json({ message: "Category added successfully!", category: savedCategory });
+  } catch (error) {
+    console.error("Error adding category:", error);
+    res.status(500).json({ message: "Error adding category" });
+  }
+});
+
+// 🔹 GET - All Categories
+router.get("/", async (req, res) => {
   try {
     const categories = await Category.find();
     res.json(categories);
   } catch (error) {
-    res.status(500).json({ message: 'Error fetching categories' });
+    console.error("Error fetching categories:", error);
+    res.status(500).json({ message: "Error fetching categories" });
   }
 });
 
-// Add a new category with image upload
-router.post('/', upload, async (req, res) => {
+// 🔹 GET - Single Category by ID
+router.get("/:id", async (req, res) => {
   try {
-    // Check if the required fields are present
-    const { name, description, slug, featured } = req.body;
-    if (!name || !description || !slug) {
-      return res.status(400).json({ message: 'Name, description, and slug are required.' });
+    const { id } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: "Invalid category ID" });
     }
 
-    // Handle image file
-    const image = req.file ? `/uploads/${req.file.filename}` : '';
+    const category = await Category.findById(id);
+    if (!category) {
+      return res.status(404).json({ message: "Category not found" });
+    }
 
-    // Create a new category
-    const newCategory = new Category({
-      name,
-      description,
-      image,
-      slug,
-      featured,
-    });
-
-    // Save the category to the database
-    await newCategory.save();
-
-    res.json({ message: 'Category added successfully!' });
+    res.json(category);
   } catch (error) {
-    console.error('Error adding category:', error);
-    res.status(500).json({ message: 'Error adding category' });
+    console.error("Error fetching category:", error);
+    res.status(500).json({ message: "Error fetching category" });
   }
 });
 
-// Update category with image upload
-router.put('/:id', upload, async (req, res) => {
+// 🔹 PUT - Update Category
+router.put("/:id", upload.single("image"), async (req, res) => {
   try {
-    // Check if the required fields are present
+    const { id } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: "Invalid category ID" });
+    }
+
     const { name, description, slug, featured } = req.body;
-    const image = req.file ? `/uploads/${req.file.filename}` : req.body.image; // Use existing image if no new one is uploaded
+    const image = req.file ? req.file.path : "";
 
-    await Category.findByIdAndUpdate(req.params.id, { name, description, image, slug, featured });
-    res.json({ message: 'Category updated successfully!' });
+    const updateData = { name, description, slug, featured };
+    if (image) updateData.image = image;
+
+    const updatedCategory = await Category.findByIdAndUpdate(id, updateData, { new: true });
+
+    if (!updatedCategory) {
+      return res.status(404).json({ message: "Category not found" });
+    }
+
+    res.json({ message: "Category updated successfully!", category: updatedCategory });
   } catch (error) {
-    console.error('Error updating category:', error);
-    res.status(500).json({ message: 'Error updating category' });
+    console.error("Error updating category:", error);
+    res.status(500).json({ message: "Error updating category" });
   }
 });
 
-// Delete a category
-router.delete('/:id', async (req, res) => {
+// 🔹 DELETE - Remove Category
+router.delete("/:id", async (req, res) => {
   try {
-    await Category.findByIdAndDelete(req.params.id);
-    res.json({ message: 'Category deleted successfully!' });
+    const { id } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: "Invalid category ID" });
+    }
+
+    const deletedCategory = await Category.findByIdAndDelete(id);
+    if (!deletedCategory) {
+      return res.status(404).json({ message: "Category not found" });
+    }
+
+    res.json({ message: "Category deleted successfully!" });
   } catch (error) {
-    console.error('Error deleting category:', error);
-    res.status(500).json({ message: 'Error deleting category' });
+    console.error("❌ Error deleting category:", error);
+    res.status(500).json({ message: "Error deleting category" });
   }
 });
 

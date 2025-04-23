@@ -2,18 +2,22 @@ const express = require('express');
 const router = express.Router();
 const User = require('../../models/userModel');
 const Product = require('../../models/productModel');
+const Order = require('../../models/orderModel'); // adjust the path as needed
+const authMiddleware = require("../../middleware/authMiddleware");
 
 // 📌 Fetch Dashboard Stats (Without Orders & Sales)
+
 router.get('/stats', async (req, res) => {
     try {
         const totalUsers = await User.countDocuments();
         const totalProducts = await Product.countDocuments();
+        const totalOrders = await Order.countDocuments();
 
         res.json({
             totalUsers,
             totalProducts,
-            totalOrders: 0,  // Since Order model is missing
-            totalSales: 0     // Since Order model is missing
+            totalOrders,
+            totalSales: 0  // Keeping totalSales fixed as 0
         });
     } catch (error) {
         res.status(500).json({ message: "Failed to fetch dashboard stats", error: error.message });
@@ -83,35 +87,73 @@ function getTimeMatchStage(range, field) {
 
     return { [field]: { $gte: startDate } };
 }
-// Total Orders API Endpoint
+// Total Orders API Endpoint for Dashboard
 router.get("/orders", async (req, res) => {
     try {
-        const { timePeriod, category } = req.query;
+        const { timePeriod } = req.query;
 
-        // Filter orders based on the selected category
-        let filter = {};
-        if (category !== "all") {
-            filter.categoryId = category;
-        }
-
-        // Example logic for time-based filtering (adjust as needed)
         const now = new Date();
+        let startDate, dateFormat, rangeLength;
+
         if (timePeriod === "daily") {
-            filter.createdAt = { $gte: new Date(now.setHours(0, 0, 0, 0)) };
+            startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate()); // Today
+            rangeLength = 1;
+            dateFormat = { day: 'numeric', month: 'short' };
         } else if (timePeriod === "weekly") {
-            filter.createdAt = { $gte: new Date(now.setDate(now.getDate() - 7)) };
+            startDate = new Date(now);
+            startDate.setDate(startDate.getDate() - 6); // Last 7 days
+            rangeLength = 7;
+            dateFormat = { day: 'numeric', month: 'short' };
         } else if (timePeriod === "monthly") {
-            filter.createdAt = { $gte: new Date(now.setMonth(now.getMonth() - 1)) };
+            startDate = new Date(now.getFullYear(), now.getMonth(), 1); // Start of month
+            rangeLength = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate(); // Days in current month
+            dateFormat = { day: 'numeric', month: 'short' };
         } else if (timePeriod === "yearly") {
-            filter.createdAt = { $gte: new Date(now.setFullYear(now.getFullYear() - 1)) };
+            startDate = new Date(now.getFullYear(), 0, 1); // Start of year
+            rangeLength = 12;
+            dateFormat = { month: 'short' };
+        } else {
+            return res.status(400).json({ message: "Invalid time period" });
         }
 
-        // Fetch orders from the database
-        const orders = await Order.find(filter);
+        // Fetch all orders after startDate
+        const orders = await Order.find({ createdAt: { $gte: startDate } });
 
-        // Aggregate data for the chart
-        const labels = ["Week 1", "Week 2", "Week 3", "Week 4"]; // Example labels
-        const data = [10, 20, 15, 30]; // Example data; replace with real stats
+        // Prepare date-wise mapping
+        const statsMap = {};
+
+        // Initialize map with all days/months and 0
+        for (let i = 0; i < rangeLength; i++) {
+            let label;
+            if (timePeriod === "yearly") {
+                const date = new Date(startDate.getFullYear(), i, 1);
+                label = date.toLocaleDateString("en-US", dateFormat);
+            } else {
+                const date = new Date(startDate);
+                date.setDate(startDate.getDate() + i);
+                label = date.toLocaleDateString("en-US", dateFormat);
+            }
+            statsMap[label] = 0;
+        }
+
+        // Count orders per day/month
+        orders.forEach(order => {
+            const date = new Date(order.createdAt);
+            let label;
+
+            if (timePeriod === "yearly") {
+                label = date.toLocaleDateString("en-US", dateFormat);
+            } else {
+                label = date.toLocaleDateString("en-US", dateFormat);
+            }
+
+            if (statsMap[label] !== undefined) {
+                statsMap[label]++;
+            }
+        });
+
+        const labels = Object.keys(statsMap);
+        const data = Object.values(statsMap);
 
         res.json({ labels, data });
     } catch (error) {
@@ -120,43 +162,221 @@ router.get("/orders", async (req, res) => {
     }
 });
 
+router.get("/all-orders", authMiddleware, async (req, res) => {
+    try {
+      const orders = await Order.find()
+        .sort({ createdAt: -1 })
+        .populate("userId", "name email phone"); // Correct field
+  
+      const formattedOrders = orders.map(order => {
+        const isRegistered = order.isRegisteredUser;
+        return {
+            _id: order._id, // MongoDB Object ID
+            orderId: order.orderId, // User-friendly Order ID
+            trackingId: order.trackingId || "N/A", // Include updated tracking ID
+            courierPartner: order.courierPartner || "N/A", // Include updated courier partner
+          isRegisteredUser: isRegistered,
+          userName: isRegistered ? order.userId?.name : order.guestName,
+          userEmail: isRegistered ? order.userId?.email : order.guestEmail,
+          userPhone: isRegistered ? order.userId?.phone : order.guestPhone,
+          orderItems: order.orderItems,
+          shippingAddress: order.shippingAddress,
+          paymentMethod: order.paymentMethod,
+          paymentStatus: order.paymentStatus,
+          transactionId: order.transactionId,
+          orderStatus: order.orderStatus,
+          totalPrice: order.totalPrice,
+          orderDate: order.orderDate,
+          createdAt: order.createdAt,
+          updatedAt: order.updatedAt
+        };
+      });
+  
+      res.json(formattedOrders);
+    } catch (error) {
+      console.error("Error fetching all orders:", error);
+      res.status(500).json({ message: "Error fetching orders" });
+    }
+  });
+
+  router.patch("/order/:id/status", authMiddleware, async (req, res) => {
+    try {
+        const { status, trackingId, courierPartner } = req.body; // Extract additional fields from the request body
+
+        const updatedFields = { orderStatus: status }; // Start with orderStatus
+        if (trackingId) updatedFields.trackingId = trackingId; // Add trackingId if provided
+        if (courierPartner) updatedFields.courierPartner = courierPartner; // Add courierPartner if provided
+
+        const order = await Order.findByIdAndUpdate(
+            req.params.id,
+            updatedFields, // Update only the provided fields
+            { new: true }
+        ).populate("userId", "name email phone");
+
+        if (!order) {
+            return res.status(404).json({ message: "Order not found" });
+        }
+
+        const isRegistered = order.isRegisteredUser;
+        const updatedOrder = {
+            _id: order._id, // MongoDB Object ID
+            orderId: order.orderId, // User-friendly Order ID
+            trackingId: order.trackingId || "N/A", // Include updated tracking ID
+            courierPartner: order.courierPartner || "N/A", // Include updated courier partner
+            isRegisteredUser: isRegistered,
+            userName: isRegistered ? order.userId?.name : order.guestName,
+            userEmail: isRegistered ? order.userId?.email : order.guestEmail,
+            userPhone: isRegistered ? order.userId?.phone : order.guestPhone,
+            orderItems: order.orderItems,
+            shippingAddress: order.shippingAddress,
+            paymentMethod: order.paymentMethod,
+            paymentStatus: order.paymentStatus,
+            transactionId: order.transactionId,
+            orderStatus: order.orderStatus,
+            totalPrice: order.totalPrice,
+            orderDate: order.orderDate,
+            createdAt: order.createdAt,
+            updatedAt: order.updatedAt
+        };
+
+        res.json({ message: "Order updated successfully", order: updatedOrder });
+    } catch (error) {
+        console.error("Error updating order:", error);
+        res.status(500).json({ message: "Error updating order" });
+    }
+});
+
+  // Get single order by ID
+router.get("/order/:id", authMiddleware, async (req, res) => {
+    try {
+      const order = await Order.findById(req.params.id).populate("userId", "name email phone");
+  
+      if (!order) {
+        return res.status(404).json({ message: "Order not found" });
+      }
+  
+      const isRegistered = order.isRegisteredUser;
+      const detailedOrder = {
+        _id: order._id, // MongoDB Object ID
+            orderId: order.orderId, // User-friendly Order ID
+            trackingId: order.trackingId || "N/A", // Include updated tracking ID
+            courierPartner: order.courierPartner || "N/A", // Include updated courier partner
+        isRegisteredUser: isRegistered,
+        userName: isRegistered ? order.userId?.name : order.guestName,
+        userEmail: isRegistered ? order.userId?.email : order.guestEmail,
+        userPhone: isRegistered ? order.userId?.phone : order.guestPhone,
+        orderItems: order.orderItems,
+        shippingAddress: order.shippingAddress,
+        paymentMethod: order.paymentMethod,
+        paymentStatus: order.paymentStatus,
+        transactionId: order.transactionId,
+        orderStatus: order.orderStatus,
+        totalPrice: order.totalPrice,
+        orderDate: order.orderDate,
+        createdAt: order.createdAt,
+        updatedAt: order.updatedAt
+      };
+  
+      res.json(detailedOrder);
+    } catch (error) {
+      console.error("Error fetching order:", error);
+      res.status(500).json({ message: "Server error" });
+    }
+  });
+  
+    
+  
+
 router.get('/users-growth', async (req, res) => {
     try {
         const { timePeriod } = req.query;
 
-        // Determine the start date based on the time period
+        const now = new Date();
         let startDate;
-        const endDate = new Date(); // Current time
+        let dateFormat;
+        let totalUnits;
+        let unitIncrement;
+
         switch (timePeriod) {
             case 'daily':
-                startDate = new Date();
-                startDate.setHours(0, 0, 0, 0); // Start of the current day
+                startDate = new Date(now.setHours(0, 0, 0, 0));
+                dateFormat = "%H:00"; // hourly
+                totalUnits = 24;
+                unitIncrement = (d) => d.setHours(d.getHours() + 1);
                 break;
             case 'weekly':
                 startDate = new Date();
-                startDate.setDate(startDate.getDate() - 7); // 7 days ago
+                startDate.setDate(now.getDate() - 6); // last 7 days
+                startDate.setHours(0, 0, 0, 0);
+                dateFormat = "%Y-%m-%d";
+                totalUnits = 7;
+                unitIncrement = (d) => d.setDate(d.getDate() + 1);
                 break;
             case 'monthly':
-                startDate = new Date();
-                startDate.setMonth(startDate.getMonth() - 1); // 1 month ago
+                startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+                dateFormat = "%Y-%m-%d";
+                totalUnits = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+                unitIncrement = (d) => d.setDate(d.getDate() + 1);
                 break;
             case 'yearly':
-                startDate = new Date();
-                startDate.setFullYear(startDate.getFullYear() - 1); // 1 year ago
+                startDate = new Date(now.getFullYear(), 0, 1);
+                dateFormat = "%Y-%m";
+                totalUnits = 12;
+                unitIncrement = (d) => d.setMonth(d.getMonth() + 1);
                 break;
             default:
                 return res.status(400).json({ message: "Invalid time period" });
         }
 
-        // Count the number of users created within the time frame
-        const totalUsers = await User.countDocuments({
-            createdAt: { $gte: startDate, $lte: endDate }
-        });
+        const users = await User.aggregate([
+            {
+                $match: {
+                    createdAt: { $gte: startDate }
+                }
+            },
+            {
+                $group: {
+                    _id: { $dateToString: { format: dateFormat, date: "$createdAt" } },
+                    count: { $sum: 1 }
+                }
+            },
+            {
+                $sort: { _id: 1 }
+            }
+        ]);
 
-        res.json({ totalUsers });
+        // Fill missing units with zero
+        const labels = [];
+        const counts = [];
+        const datePointer = new Date(startDate);
+        const userMap = new Map(users.map(u => [u._id, u.count]));
+
+        for (let i = 0; i < totalUnits; i++) {
+            const formatter = new Intl.DateTimeFormat('en-CA', {
+                year: 'numeric',
+                month: timePeriod === 'yearly' ? '2-digit' : 'numeric',
+                day: timePeriod === 'daily' ? undefined : '2-digit',
+                hour: timePeriod === 'daily' ? '2-digit' : undefined,
+                hour12: false
+            });
+
+            const label = timePeriod === 'daily'
+                ? `${String(datePointer.getHours()).padStart(2, '0')}:00`
+                : timePeriod === 'yearly'
+                ? `${datePointer.getFullYear()}-${String(datePointer.getMonth() + 1).padStart(2, '0')}`
+                : formatter.format(datePointer);
+
+            labels.push(label);
+            counts.push(userMap.get(label) || 0);
+
+            unitIncrement(datePointer);
+        }
+
+        res.json({ labels, data: counts });
+
     } catch (error) {
-        console.error("Error fetching user growth data:", error);
-        res.status(500).json({ message: "Server error" });
+        console.error("Error in users-growth route:", error);
+        res.status(500).json({ message: "Server error", error: error.message });
     }
 });
 

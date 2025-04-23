@@ -9,14 +9,14 @@ const userSchema = new mongoose.Schema({
     status: { type: String, enum: ["active", "blocked"], default: "active" }, 
 
     createdAt: { type: Date, default: Date.now }, 
-
-    // ✅ New Schema (Array of Objects)
+// Address Schema with _id for each address
 address: [{
+    _id: { type: mongoose.Schema.Types.ObjectId, default: () => new mongoose.Types.ObjectId() },  // Automatically generates unique ID for each address
     street: { type: String, required: true }, 
     city: { type: String, required: true },  
     state: { type: String, required: true },  
     zipcode: { type: String, required: true }, 
-    country: { type: String, required: true } 
+    country: { type: String, required: true }
 }]
     // ✅ Cart (Initially Empty)
    , cart: [

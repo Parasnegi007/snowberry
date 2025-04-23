@@ -456,37 +456,65 @@ router.delete("/wishlist/:productId", authMiddleware, async (req, res) => {
 
 
 // ✅ Get User Cart
+// GET CART - already reviewed and fixed earlier
 router.get("/cart", authMiddleware, async (req, res) => {
     try {
-        const user = await User.findById(req.user.userId).populate("cart.productId");
+        const user = await User.findById(req.user.userId).lean();
 
         if (!user) {
             return res.status(404).json({ message: "User not found!" });
         }
 
-        res.json(user.cart.map(item => ({
-            productId: item.productId._id,
-            name: item.productId.name,
-            price: item.productId.price,
-            image: item.productId.image,
-            quantity: item.quantity
-        })));
+        const updatedCart = await Promise.all(
+            user.cart.map(async (item) => {
+                const product = await Product.findById(item.productId).lean();
+
+                if (!product) {
+                    return {
+                        productId: item.productId,
+                        name: "This product is no longer available",
+                        price: 0,
+                        image: null,
+                        quantity: item.quantity,
+                        outOfStock: true
+                    };
+                }
+
+                return {
+                    productId: product._id,
+                    name: product.name,
+                    price: product.price,
+                    image: product.image,
+                    quantity: item.quantity,
+                    outOfStock: false
+                };
+            })
+        );
+
+        res.json(updatedCart);
     } catch (error) {
         res.status(500).json({ message: "Error fetching cart", error: error.message });
     }
 });
+
 
 router.delete("/cart/:productId", authMiddleware, async (req, res) => {
     try {
         const { productId } = req.params;
         const user = await User.findById(req.user.userId);
 
-        const cartItem = user.cart.find(item => item.productId.toString() === productId);
-        if (!cartItem) {
+        if (!user) {
+            return res.status(404).json({ message: "User not found" });
+        }
+
+        // Remove the item with matching productId (string compare)
+        const existingItemIndex = user.cart.findIndex(item => item.productId.toString() === productId);
+
+        if (existingItemIndex === -1) {
             return res.status(404).json({ message: "Product not found in cart" });
         }
 
-        user.cart = user.cart.filter(item => item.productId.toString() !== productId);
+        user.cart.splice(existingItemIndex, 1);
         await user.save();
 
         res.json({ message: "Item removed from cart", cart: user.cart });
@@ -496,13 +524,20 @@ router.delete("/cart/:productId", authMiddleware, async (req, res) => {
 });
 
 
+
 // ✅ Add to Cart
 router.post("/cart", authMiddleware, async (req, res) => {
     try {
         const { productId, quantity } = req.body;
         const user = await User.findById(req.user.userId);
 
-        // Check if product is already in cart
+        // Check if product still exists
+        const product = await Product.findById(productId);
+        if (!product) {
+            return res.status(404).json({ message: "This product no longer exists." });
+        }
+
+        // Check if already in cart
         const cartItem = user.cart.find(item => item.productId.toString() === productId);
         if (cartItem) {
             cartItem.quantity += quantity;
@@ -513,12 +548,9 @@ router.post("/cart", authMiddleware, async (req, res) => {
         await user.save();
         res.json({ message: "Added to cart", cart: user.cart });
     } catch (error) {
-        res.status(500).json({ message: "Error adding to cart" });
+        res.status(500).json({ message: "Error adding to cart", error: error.message });
     }
 });
-
-
-// 🔹 UPDATE Cart Quantity
 router.put("/cart/:productId", authMiddleware, async (req, res) => {
     try {
         const { productId } = req.params;
@@ -529,22 +561,30 @@ router.put("/cart/:productId", authMiddleware, async (req, res) => {
         }
 
         const user = await User.findById(req.user.userId);
-        const cartItem = user.cart.find(item => item.productId.toString() === productId);
 
-        if (cartItem) {
-            cartItem.quantity = quantity;
-            await user.save();
-            return res.json({ message: "Cart updated", cart: user.cart });
+        const cartItem = user.cart.find(item => item.productId.toString() === productId);
+        if (!cartItem) {
+            return res.status(404).json({ message: "Product not found in cart" });
         }
 
-        res.status(404).json({ message: "Product not found in cart" });
+        // Check if product exists before allowing quantity update
+        const productExists = await Product.exists({ _id: productId });
+        if (!productExists) {
+            return res.status(410).json({ message: "Cannot update quantity: Product has been removed" });
+        }
+
+        cartItem.quantity = quantity;
+        await user.save();
+
+        res.json({ message: "Cart updated", cart: user.cart });
     } catch (error) {
         res.status(500).json({ message: "Error updating cart", error: error.message });
     }
 });
 
 
-console.log("✅ userRoutes.js is running!");
+
+
 
 //USERS 
 
@@ -758,23 +798,26 @@ router.get("/guest/getAddresses/:email", async (req, res) => {
     }
 });
 // DELETE route to remove guest addresses
-router.delete('/guest/deleteAddress/:email', async (req, res) => {
+// Route to delete an address for a logged-in user
+router.delete("/deleteAddress/:addressId", authMiddleware, async (req, res) => {
     try {
-        const email = req.params.email;
-        const unregUser = await UnregUser.findOne({ email });
+        const { addressId } = req.params; // Get the address ID from the URL params
 
-        if (!unregUser) {
-            return res.status(404).json({ message: "Guest address not found" });
+        const user = await User.findById(req.user.userId); // Fetch the user
+        if (!user) {
+            return res.status(404).json({ message: "User not found" });
         }
 
-        // Remove address from the array (assuming address array is named 'addresses')
-        unregUser.addresses = unregUser.addresses.filter(addr => addr.email !== email);
-        await unregUser.save();
+        // Remove the address with the specified addressId
+        user.address = user.address.filter(addr => addr._id.toString() !== addressId);
+        
+        // Save the updated user document
+        await user.save();
 
-        res.status(200).json({ message: "Guest address deleted successfully" });
+        res.status(200).json({ message: "Address deleted successfully", address: user.address });
     } catch (error) {
-        console.error("Error deleting guest address:", error);
-        res.status(500).json({ message: "Failed to delete guest address" });
+        console.error("Error deleting address:", error);
+        res.status(500).json({ message: "Server error!" });
     }
 });
 
