@@ -19,7 +19,8 @@ mongoose.connect(process.env.MONGODB_URI)
 app.use(cors({
   origin: [
     "https://snowberry.vercel.app", 
-    "https://snowwberry.vercel.app"
+    "https://snowwberry.vercel.app",
+    "https://seller-olive.vercel.app"
   ],
 }));
 
