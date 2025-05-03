@@ -10,7 +10,10 @@ const path = require('path'); // ✅ Add this line
 const categoryRoutes = require('./seller-backend/routes/categoryRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 
-
+// Health Check Route (to keep Render awake)
+app.get('/healthcheck', (req, res) => {
+  res.send('OK');
+});
 // ✅ Connect to MongoDB using environment variables
 mongoose.connect(process.env.MONGODB_URI)
   .then(() => console.log("MongoDB connected successfully!"))
