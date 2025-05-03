@@ -12,8 +12,10 @@ const orderRoutes = require('./routes/orderRoutes');
 
 // Health Check Route (to keep Render awake)
 app.get('/healthcheck', (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', 'https://snowwberry.vercel.app'); 
   res.send('OK');
 });
+
 // ✅ Connect to MongoDB using environment variables
 mongoose.connect(process.env.MONGODB_URI)
   .then(() => console.log("MongoDB connected successfully!"))
